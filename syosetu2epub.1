@@ -43,6 +43,11 @@ Fetch only a subset of chapters.
 \fIRANGE\fR is either a single chapter number (\fI5\fR) or an inclusive range (\fI1\-20\fR).
 Chapter numbers are 1-based.
 .TP
+.B \-\-no\-delay
+Skip the 1-second polite delay between HTTP requests.
+Speeds up fetching significantly for large novels.
+Use sparingly — the delay exists to avoid hammering the server.
+.TP
 .B \-\-local
 Save the EPUB locally and skip sending it to Kindle.
 .TP

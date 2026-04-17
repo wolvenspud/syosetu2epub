@@ -17,6 +17,7 @@ Usage:
   uv run syosetu2epub.py https://ncode.syosetu.com/n4395il/
   uv run syosetu2epub.py n4395il --chapters 1-20
   uv run syosetu2epub.py n4395il --local           # save EPUB locally, don't send
+  uv run syosetu2epub.py n4395il --no-delay        # skip 1s delay between requests
   uv run syosetu2epub.py n4395il --send-to your@kindle.com  # override configured address
   uv run syosetu2epub.py n4395il --send-to your@kindle.com \\
       --smtp-user you@gmail.com --smtp-pass 'apppassword'  # override config
@@ -455,6 +456,10 @@ def main() -> None:
         help="Ignore local cache and re-download everything from the site",
     )
     parser.add_argument(
+        "--no-delay", action="store_true",
+        help="Skip the 1 s polite delay between requests (faster, but less kind to the server)",
+    )
+    parser.add_argument(
         "--local", action="store_true",
         help="Save EPUB locally only; skip sending to Kindle",
     )
@@ -481,6 +486,10 @@ def main() -> None:
     if args.setup:
         run_setup()
         return
+
+    if args.no_delay:
+        global DELAY
+        DELAY = 0.0
 
     # Merge config under CLI flags (CLI always wins)
     cfg = load_config()
@@ -549,6 +558,17 @@ def main() -> None:
         selected_for_fetch = [(arc_i, ch_num, ch) for arc_i, ch_num, ch in selected]
     else:
         selected_for_fetch = all_chapters
+
+    # Time estimate based on uncached chapters × per-request delay
+    if DELAY > 0:
+        uncached = sum(
+            1 for _, ch_num, _ in selected_for_fetch
+            if not _chapter_cache_path(code, ch_num).exists() or args.refresh
+        )
+        if uncached:
+            secs = int(uncached * DELAY)
+            eta = f"{secs // 60}m {secs % 60}s" if secs >= 60 else f"{secs}s"
+            print(f"Downloading {uncached} chapters from network (~{eta} estimated)")
 
     # Fetch all chapter bodies, grouped by arc
     arc_bodies: list[list[str]] = []
