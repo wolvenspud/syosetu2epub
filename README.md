@@ -12,12 +12,15 @@ Scrape novels from [ncode.syosetu.com](https://ncode.syosetu.com) and convert th
 # First-time setup (saves SMTP credentials for future runs)
 uv run syosetu2epub.py --setup
 
-# Scrape a novel and save as EPUB
+# Scrape and send to Kindle (default behaviour)
 uv run syosetu2epub.py n4395il
 uv run syosetu2epub.py https://ncode.syosetu.com/n4395il/
 
-# Scrape and send directly to Kindle
-uv run syosetu2epub.py n4395il --send-to your@kindle.com
+# Save EPUB locally only (skip sending)
+uv run syosetu2epub.py n4395il --local
+
+# Override the configured Kindle address for this run
+uv run syosetu2epub.py n4395il --send-to other@kindle.com
 
 # Fetch only a range of chapters
 uv run syosetu2epub.py n4395il --chapters 1-20

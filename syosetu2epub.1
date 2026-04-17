@@ -1,0 +1,119 @@
+.TH SYOSETU2EPUB 1 "2026-04-18" "1.0" "User Commands"
+.SH NAME
+syosetu2epub \- scrape a novel from ncode.syosetu.com and send it to Kindle as an EPUB
+.SH SYNOPSIS
+.B syosetu2epub
+[\fIOPTIONS\fR] \fINOVEL\fR
+.br
+.B syosetu2epub
+.B \-\-setup
+.br
+.B syosetu2epub
+.B \-\-resend
+\fIEPUB_PATH\fR
+.SH DESCRIPTION
+.B syosetu2epub
+fetches a novel from ncode.syosetu.com, converts it to a Kindle-ready EPUB, and
+emails it to your configured Kindle address by default.
+Pass
+.B \-\-local
+to save the EPUB file locally instead of sending it.
+.PP
+\fINOVEL\fR may be a bare novel code (e.g.\& \fIn4395il\fR) or a full URL
+(e.g.\& \fIhttps://ncode.syosetu.com/n4395il/\fR).
+.PP
+Scraped chapters are cached under
+.I ~/.cache/syosetu2epub/
+so subsequent runs do not re-hit the server.
+SMTP credentials are stored in
+.I ~/.config/syosetu2epub/config.json
+after running
+.BR \-\-setup .
+.SH OPTIONS
+.TP
+.B \-\-setup
+Run the interactive credential setup wizard and exit.
+Saves Gmail SMTP credentials and an optional default Kindle address to the config file.
+.TP
+.BI \-\-output " PATH" ", " \-o " PATH"
+Write the EPUB to \fIPATH\fR instead of the default \fI<title>.epub\fR in the current directory.
+.TP
+.BI \-\-chapters " RANGE" ", " \-c " RANGE"
+Fetch only a subset of chapters.
+\fIRANGE\fR is either a single chapter number (\fI5\fR) or an inclusive range (\fI1\-20\fR).
+Chapter numbers are 1-based.
+.TP
+.B \-\-local
+Save the EPUB locally and skip sending it to Kindle.
+.TP
+.B \-\-refresh
+Ignore the local cache and re-download everything from the site.
+.TP
+.BI \-\-resend " EPUB_PATH"
+Skip scraping; attach \fIEPUB_PATH\fR and email it to Kindle directly.
+Requires a Kindle address to be configured or passed via \fB\-\-send\-to\fR.
+.SS "Send to Kindle"
+.TP
+.BI \-\-send\-to " KINDLE_EMAIL"
+Override the Kindle address from the config file for this run.
+.TP
+.BI \-\-smtp\-user " EMAIL"
+Override the sender Gmail address from the config file.
+.TP
+.BI \-\-smtp\-pass " PASSWORD"
+Override the SMTP app password from the config file.
+.TP
+.BI \-\-smtp\-host " HOST"
+Override the SMTP host (default: \fIsmtp.gmail.com\fR).
+.TP
+.BI \-\-smtp\-port " PORT"
+Override the SMTP port (default: \fI587\fR).
+.SH EXAMPLES
+First-time setup:
+.PP
+.RS
+.B syosetu2epub \-\-setup
+.RE
+.PP
+Scrape and send to your configured Kindle address:
+.PP
+.RS
+.B syosetu2epub n4395il
+.RE
+.PP
+Scrape and save locally without sending:
+.PP
+.RS
+.B syosetu2epub n4395il \-\-local
+.RE
+.PP
+Fetch only the first 20 chapters and send:
+.PP
+.RS
+.B syosetu2epub n4395il \-\-chapters 1\-20
+.RE
+.PP
+Resend an existing EPUB to a different Kindle address:
+.PP
+.RS
+.B syosetu2epub \-\-resend "novel.epub" \-\-send\-to other@kindle.com
+.RE
+.SH FILES
+.TP
+.I ~/.config/syosetu2epub/config.json
+SMTP credentials and default Kindle email address.
+.TP
+.I ~/.cache/syosetu2epub/
+Per-novel cache directory containing TOC JSON and chapter HTML files.
+.SH NOTES
+Amazon only delivers documents from approved sender addresses.
+Add your Gmail address to the
+.B Approved Personal Document Email List
+at
+.IR "amazon.com \(-> Account \(-> Manage Your Content and Devices \(-> Preferences \(-> Personal Document Settings" .
+.PP
+Use a Gmail
+.I App Password
+rather than your account password.
+.SH AUTHOR
+Written by wolvenspud.

@@ -9,14 +9,15 @@
 # ]
 # ///
 """
-syosetu2epub — scrape a novel from ncode.syosetu.com and export as Kindle-ready EPUB.
+syosetu2epub — scrape a novel from ncode.syosetu.com and send to Kindle as EPUB.
 
 Usage:
   uv run syosetu2epub.py --setup                   # first-time credential setup
-  uv run syosetu2epub.py n4395il                   # scrape and save locally
+  uv run syosetu2epub.py n4395il                   # scrape and send to Kindle
   uv run syosetu2epub.py https://ncode.syosetu.com/n4395il/
   uv run syosetu2epub.py n4395il --chapters 1-20
-  uv run syosetu2epub.py n4395il --send-to your@kindle.com
+  uv run syosetu2epub.py n4395il --local           # save EPUB locally, don't send
+  uv run syosetu2epub.py n4395il --send-to your@kindle.com  # override configured address
   uv run syosetu2epub.py n4395il --send-to your@kindle.com \\
       --smtp-user you@gmail.com --smtp-pass 'apppassword'  # override config
 """
@@ -454,6 +455,10 @@ def main() -> None:
         help="Ignore local cache and re-download everything from the site",
     )
     parser.add_argument(
+        "--local", action="store_true",
+        help="Save EPUB locally only; skip sending to Kindle",
+    )
+    parser.add_argument(
         "--resend", metavar="EPUB_PATH",
         help="Skip scraping; email an existing .epub file directly",
     )
@@ -572,8 +577,15 @@ def main() -> None:
     out_path = Path(args.output) if args.output else Path(f"{safe_name}.epub")
     build_epub(toc, arc_bodies, out_path)
 
-    # Optionally email
-    if send_to:
+    # Send to Kindle by default; skip only when --local is passed
+    if not args.local:
+        if not send_to:
+            sys.exit(
+                "No Kindle address configured.\n"
+                "Run:  uv run syosetu2epub.py --setup\n"
+                "Or:   uv run syosetu2epub.py <novel> --send-to your@kindle.com\n"
+                "Or:   uv run syosetu2epub.py <novel> --local   (save only, no email)"
+            )
         _check_smtp(smtp_user, smtp_pass)
         send_to_kindle(out_path, send_to, smtp_user, smtp_pass, smtp_host, smtp_port)
 
