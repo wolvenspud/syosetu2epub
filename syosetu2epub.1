@@ -22,7 +22,10 @@ to save the EPUB file locally instead of sending it.
 \fINOVEL\fR may be a bare novel code (e.g.\& \fIn4395il\fR) or a full URL
 (e.g.\& \fIhttps://ncode.syosetu.com/n4395il/\fR).
 .PP
-Scraped chapters are cached under
+Illustrations (usually hosted on mitemin.net) are downloaded and embedded in
+the EPUB. An image that cannot be fetched is replaced with a text placeholder.
+.PP
+Scraped chapters and images are cached under
 .I ~/.cache/syosetu2epub/
 so subsequent runs do not re-hit the server.
 SMTP credentials are stored in
@@ -110,7 +113,9 @@ Resend an existing EPUB to a different Kindle address:
 SMTP credentials and default Kindle email address.
 .TP
 .I ~/.cache/syosetu2epub/
-Per-novel cache directory containing TOC JSON and chapter HTML files.
+Per-novel cache directory containing TOC JSON, chapter HTML files and an
+.I images/
+subdirectory of downloaded illustrations.
 .SH NOTES
 Amazon only delivers documents from approved sender addresses.
 Add your Gmail address to the
@@ -121,5 +126,9 @@ at
 Use a Gmail
 .I App Password
 rather than your account password.
+.PP
+Send to Kindle saves documents to your Kindle library, which syncs to every
+device on the account, so one Kindle address is enough. Sending to several
+produces duplicate library entries.
 .SH AUTHOR
 Written by wolvenspud.

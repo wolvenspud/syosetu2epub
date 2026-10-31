@@ -26,6 +26,8 @@ Usage:
 
 import argparse
 import getpass
+import hashlib
+import html
 import json
 import re
 import smtplib
@@ -248,7 +250,11 @@ def fetch_chapter_body(code: str, ch_num: int, url: str,
     """Return sanitised HTML content of one chapter, using cache when available."""
     cache_path = _chapter_cache_path(code, ch_num)
     if not refresh and cache_path.exists():
-        return cache_path.read_text(encoding="utf-8")
+        cached = cache_path.read_text(encoding="utf-8")
+        # Caches written before image support hold illustrations as a bare
+        # <img/> with the src stripped; refetch those so the images come back.
+        if "<img/>" not in cached:
+            return cached
 
     soup = get(url)
 
@@ -269,9 +275,20 @@ def fetch_chapter_body(code: str, ch_num: int, url: str,
         for ruby in sec.find_all("ruby"):
             base = "".join(t.get_text() for t in ruby.find_all("rb")) or ruby.get_text()
             ruby.replace_with(base)
-        # Strip all attrs from every tag
+        # Illustrations (挿絵, usually hosted on mitemin.net) arrive as
+        # <a href=…><img src="//…"/></a>. Keep the image's absolute src and alt
+        # and drop the wrapping link, which only points back at the image page.
+        for img in sec.find_all("img"):
+            src = img.get("src", "")
+            if src.startswith("//"):
+                src = "https:" + src
+            new_img = soup.new_tag("img", src=src, alt=img.get("alt") or "挿絵")
+            parent = img.parent
+            (parent if parent is not None and parent.name == "a" else img).replace_with(new_img)
+        # Strip all attrs from every tag, except src/alt on images
         for tag in sec.find_all(True):
-            tag.attrs = {}
+            if tag.name != "img":
+                tag.attrs = {}
         # Keep only <p> and <br> in inner HTML
         html = sec.decode_contents()
         parts.append(html)
@@ -279,6 +296,73 @@ def fetch_chapter_body(code: str, ch_num: int, url: str,
     result = "\n".join(parts)
     cache_path.write_text(result, encoding="utf-8")
     return result
+
+
+def _image_cache_dir(code: str) -> Path:
+    d = _novel_cache(code) / "images"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png":  ".png",
+    "image/gif":  ".gif",
+}
+
+
+def fetch_image(url: str, image_dir: Path) -> tuple[str, bytes, str] | None:
+    """Return (filename, data, media_type) for an image, using the cache when possible."""
+    key = hashlib.sha1(url.encode()).hexdigest()[:16]
+    for ext_type, ext in IMAGE_TYPES.items():
+        cached = image_dir / f"{key}{ext}"
+        if cached.exists():
+            return cached.name, cached.read_bytes(), ext_type
+
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"    ! image failed: {url} ({exc})")
+        return None
+    finally:
+        time.sleep(DELAY)
+
+    media_type = resp.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    ext = IMAGE_TYPES.get(media_type)
+    if ext is None:
+        print(f"    ! image skipped, unsupported type {media_type or '?'}: {url}")
+        return None
+
+    path = image_dir / f"{key}{ext}"
+    path.write_bytes(resp.content)
+    return path.name, resp.content, media_type
+
+
+IMG_TAG_RE = re.compile(r"<img\b[^>]*>")
+IMG_ATTR_RE = re.compile(r'(src|alt)="([^"]*)"')
+
+
+def embed_images(book: epub.EpubBook, body: str, image_dir: Path,
+                 added: set[str]) -> str:
+    """Download each <img> in body, add it to the book, and point src at the copy."""
+    def replace(m: re.Match) -> str:
+        attrs = {k: html.unescape(v) for k, v in IMG_ATTR_RE.findall(m.group(0))}
+        src, alt = attrs.get("src", ""), attrs.get("alt") or "挿絵"
+        fetched = fetch_image(src, image_dir) if src.startswith("http") else None
+        if fetched is None:
+            return f"<span class='missing-image'>［{html.escape(alt)}］</span>"
+        name, data, media_type = fetched
+        file_name = f"images/{name}"
+        if file_name not in added:
+            book.add_item(epub.EpubImage(
+                uid=f"img-{name.split('.')[0]}", file_name=file_name,
+                media_type=media_type, content=data,
+            ))
+            added.add(file_name)
+        return f'<img src="{file_name}" alt="{html.escape(alt)}"/>'
+
+    return IMG_TAG_RE.sub(replace, body)
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +382,8 @@ p  { margin: 0.35em 0; text-indent: 1em; }
 .description { font-style: italic; margin: 1.5em 0 2em; }
 .arc-title { font-size: 1.1em; font-weight: bold; text-align: center;
              border-bottom: 1px solid #ccc; padding-bottom: 0.4em; margin: 2em 0 1em; }
+img { display: block; max-width: 100%; height: auto; margin: 1em auto; }
+.missing-image { color: #888; }
 """
 
 
@@ -312,11 +398,13 @@ def _xhtml(title: str, body: str) -> str:
     )
 
 
-def build_epub(toc: dict, arc_bodies: list[list[str]], out_path: Path) -> None:
+def build_epub(toc: dict, arc_bodies: list[list[str]], out_path: Path,
+               image_dir: Path) -> None:
     """
     toc:       result of fetch_toc (possibly chapter-filtered)
     arc_bodies: list of lists — arc_bodies[i][j] is the HTML body of
                 toc['arcs'][i]['chapters'][j]
+    image_dir: cache directory for downloaded illustrations
     """
     book = epub.EpubBook()
     safe_title = toc["title"]
@@ -347,6 +435,7 @@ def build_epub(toc: dict, arc_bodies: list[list[str]], out_path: Path) -> None:
     spine = ["nav", info_page]
     toc_entries: list = []
     ch_idx = 1
+    added_images: set[str] = set()
 
     for arc, bodies in zip(toc["arcs"], arc_bodies):
         arc_epub_chapters: list[epub.EpubHtml] = []
@@ -354,6 +443,7 @@ def build_epub(toc: dict, arc_bodies: list[list[str]], out_path: Path) -> None:
         for ch_meta, body in zip(arc["chapters"], bodies):
             fname = f"chapter_{ch_idx:04d}.xhtml"
             ch_title = ch_meta["title"]
+            body = embed_images(book, body, image_dir, added_images)
             content = _xhtml(
                 ch_title,
                 f"<h2>{ch_title}</h2>\n{body}",
@@ -379,7 +469,8 @@ def build_epub(toc: dict, arc_bodies: list[list[str]], out_path: Path) -> None:
 
     epub.write_epub(str(out_path), book)
     size_kb = out_path.stat().st_size // 1024
-    print(f"\nSaved: {out_path}  ({size_kb} KB, {ch_idx - 1} chapters)")
+    images = f", {len(added_images)} images" if added_images else ""
+    print(f"\nSaved: {out_path}  ({size_kb} KB, {ch_idx - 1} chapters{images})")
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +713,7 @@ def main() -> None:
     # Build EPUB
     safe_name = re.sub(r'[\\/:*?"<>|]', "_", toc["title"])
     out_path = Path(args.output) if args.output else Path(f"{safe_name}.epub")
-    build_epub(toc, arc_bodies, out_path)
+    build_epub(toc, arc_bodies, out_path, _image_cache_dir(code))
 
     # Send to Kindle by default; skip only when --local is passed
     if not args.local:
