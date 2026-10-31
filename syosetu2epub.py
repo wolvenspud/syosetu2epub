@@ -19,6 +19,7 @@ Usage:
   uv run syosetu2epub.py n4395il --local           # save EPUB locally, don't send
   uv run syosetu2epub.py n4395il --no-delay        # skip 1s delay between requests
   uv run syosetu2epub.py n4395il --send-to your@kindle.com  # override configured address
+  uv run syosetu2epub.py n4395il --send-to a@kindle.com --send-to b@kindle.com  # multiple
   uv run syosetu2epub.py n4395il --send-to your@kindle.com \\
       --smtp-user you@gmail.com --smtp-pass 'apppassword'  # override config
 """
@@ -69,6 +70,9 @@ def save_config(cfg: dict) -> None:
 def run_setup() -> None:
     """Interactive first-time (or re-) configuration wizard."""
     existing = load_config()
+    # Legacy configs may hold a single string; show it as a comma-joined default.
+    if existing.get("kindle_email"):
+        existing["kindle_email"] = ", ".join(normalize_emails(existing["kindle_email"]))
     print("=== syosetu2epub setup ===")
     print(f"Config will be saved to: {CONFIG_PATH}\n")
 
@@ -86,10 +90,11 @@ def run_setup() -> None:
         "smtp_pass":    prompt("App password",           "smtp_pass", secret=True),
         "smtp_host":    prompt("SMTP host",              "smtp_host", default="smtp.gmail.com"),
         "smtp_port":    int(prompt("SMTP port",          "smtp_port", default="587") or 587),
-        "kindle_email": prompt("Default Kindle email (optional, press Enter to skip)",
+        "kindle_email": prompt("Default Kindle email(s), comma-separated",
                                "kindle_email"),
     }
-    # Drop empty optional fields
+    # Store the recipients as a normalized list; drop if somehow empty
+    cfg["kindle_email"] = normalize_emails(cfg["kindle_email"])
     if not cfg["kindle_email"]:
         cfg.pop("kindle_email")
 
@@ -100,6 +105,20 @@ def run_setup() -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def normalize_emails(value) -> list[str]:
+    """Coerce a str (comma/space-separated), list, or None into a clean list."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    out: list[str] = []
+    for item in value:
+        for part in re.split(r"[,\s]+", str(item).strip()):
+            if part and part not in out:
+                out.append(part)
+    return out
+
 
 def extract_code(raw: str) -> str:
     """Return the bare novel code from a URL or bare code string."""
@@ -369,35 +388,42 @@ def build_epub(toc: dict, arc_bodies: list[list[str]], out_path: Path) -> None:
 
 def send_to_kindle(
     epub_path: Path,
-    kindle_addr: str,
+    kindle_addrs: str | list[str],
     smtp_user: str,
     smtp_pass: str,
     smtp_host: str = "smtp.gmail.com",
     smtp_port: int = 587,
 ) -> None:
-    print(f"\nSending {epub_path.name} to {kindle_addr} via {smtp_host}:{smtp_port} …")
+    recipients = normalize_emails(kindle_addrs)
+    if not recipients:
+        sys.exit("No Kindle recipients to send to.")
 
-    msg = MIMEMultipart()
-    msg["From"] = smtp_user
-    msg["To"] = kindle_addr
-    # Subject "convert" tells Amazon to convert the file; omit it for EPUB which
-    # Kindle reads natively — use blank or the book title.
-    msg["Subject"] = epub_path.stem
-
-    msg.attach(MIMEText("Sent by syosetu2epub.", "plain", "utf-8"))
-
+    # Read the attachment once; reuse across recipients.
     with open(epub_path, "rb") as fh:
+        payload = fh.read()
+
+    def build_message(addr: str) -> MIMEMultipart:
+        msg = MIMEMultipart()
+        msg["From"] = smtp_user
+        msg["To"] = addr
+        # Subject "convert" tells Amazon to convert the file; omit it for EPUB which
+        # Kindle reads natively — use blank or the book title.
+        msg["Subject"] = epub_path.stem
+        msg.attach(MIMEText("Sent by syosetu2epub.", "plain", "utf-8"))
         part = MIMEBase("application", "epub+zip")
-        part.set_payload(fh.read())
+        part.set_payload(payload)
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", "attachment", filename=epub_path.name)
         msg.attach(part)
+        return msg
 
     with smtplib.SMTP(smtp_host, smtp_port) as server:
         server.ehlo()
         server.starttls()
         server.login(smtp_user, smtp_pass)
-        server.sendmail(smtp_user, kindle_addr, msg.as_string())
+        for addr in recipients:
+            print(f"\nSending {epub_path.name} to {addr} via {smtp_host}:{smtp_port} …")
+            server.sendmail(smtp_user, addr, build_message(addr).as_string())
 
     print("Email sent successfully.")
     print("Note: Add your Gmail address to your Kindle's Approved Personal Document Email List")
@@ -469,8 +495,9 @@ def main() -> None:
     )
 
     kg = parser.add_argument_group("Send to Kindle")
-    kg.add_argument("--send-to", metavar="KINDLE_EMAIL",
-                    help="Kindle address (overrides config's kindle_email)")
+    kg.add_argument("--send-to", metavar="KINDLE_EMAIL", action="append",
+                    help="Kindle address (overrides config's kindle_email); "
+                         "repeat or comma-separate for multiple recipients")
     kg.add_argument("--smtp-user", metavar="EMAIL",
                     help="Sender Gmail (overrides config)")
     kg.add_argument("--smtp-pass", metavar="PASSWORD",
@@ -497,7 +524,7 @@ def main() -> None:
     smtp_pass = args.smtp_pass or cfg.get("smtp_pass")
     smtp_host = args.smtp_host or cfg.get("smtp_host", "smtp.gmail.com")
     smtp_port = args.smtp_port or cfg.get("smtp_port", 587)
-    send_to   = args.send_to  or cfg.get("kindle_email")
+    send_to   = normalize_emails(args.send_to) or normalize_emails(cfg.get("kindle_email"))
 
     # --resend: skip scraping, just email an existing file
     if args.resend:

@@ -22,6 +22,9 @@ uv run syosetu2epub.py n4395il --local
 # Override the configured Kindle address for this run
 uv run syosetu2epub.py n4395il --send-to other@kindle.com
 
+# Send to multiple Kindle addresses (repeat the flag or comma-separate)
+uv run syosetu2epub.py n4395il --send-to phone@kindle.com --send-to tablet@kindle.com
+
 # Fetch only a range of chapters
 uv run syosetu2epub.py n4395il --chapters 1-20
 
